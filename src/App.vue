@@ -2,23 +2,41 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 
 import {
-  classifyFiles,
-  getTaipeiMonthInfo,
+  getDefaultCheckDate,
+  getTaipeiThreshold,
   type ChangeRow,
-  type ClassifiedFiles,
   type ProcessingRecord,
 } from './domain'
-import { startProcessing, type ProcessingTask, type RunProgress } from './runner'
+import {
+  startProcessing,
+  type ProcessingTask,
+  type RunProgress,
+  type RunSummary,
+} from './runner'
 
 const PAGE_SIZE = 100
-const monthInfo = ref(getTaipeiMonthInfo())
-const checkDay = ref(monthInfo.value.defaultDay)
-const selection = ref<ClassifiedFiles>({ candidates: [], records: [], tooMany: false })
-const selectedCount = ref(0)
+const emptySummary = (totalFiles = 0): RunSummary => ({
+  totalFiles,
+  scannedFiles: 0,
+  excelFiles: 0,
+  processedExcelFiles: 0,
+  skippedExcelFiles: 0,
+  nonExcelFiles: 0,
+})
+
+const checkDate = ref(getDefaultCheckDate())
+const selectedFiles = ref<File[]>([])
 const folderName = ref('')
 const state = ref<'idle' | 'running' | 'completed' | 'error' | 'canceled'>('idle')
-const notice = ref('請先選擇包含 Excel 的來源資料夾。')
-const progress = ref<RunProgress>({ stage: 'analyzing', completed: 0, total: 0, currentFile: '' })
+const notice = ref('請先選擇包含申報資料的來源資料夾。')
+const progress = ref<RunProgress>({
+  stage: 'analyzing',
+  completed: 0,
+  total: 0,
+  currentFile: '',
+  summary: emptySummary(),
+})
+const summary = ref<RunSummary>(emptySummary())
 const rows = ref<ChangeRow[]>([])
 const records = ref<ProcessingRecord[]>([])
 const downloadUrl = ref('')
@@ -26,14 +44,13 @@ const page = ref(1)
 let currentTask: ProcessingTask | null = null
 
 const canStart = computed(
-  () => state.value !== 'running' && selection.value.candidates.length > 0 && !selection.value.tooMany,
+  () => state.value !== 'running' && selectedFiles.value.length > 0 && Boolean(checkDate.value),
 )
 const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / PAGE_SIZE)))
 const visibleRows = computed(() => {
   const start = (page.value - 1) * PAGE_SIZE
   return rows.value.slice(start, start + PAGE_SIZE)
 })
-const ignoredCount = computed(() => selectedCount.value - selection.value.candidates.length)
 
 function revokeDownload() {
   if (!downloadUrl.value) return
@@ -45,6 +62,7 @@ function clearResult() {
   revokeDownload()
   rows.value = []
   records.value = []
+  summary.value = emptySummary(selectedFiles.value.length)
   page.value = 1
 }
 
@@ -54,54 +72,47 @@ function selectFolder(event: Event) {
   clearResult()
 
   const files = Array.from((event.target as HTMLInputElement).files ?? [])
-  selectedCount.value = files.length
+  selectedFiles.value = files
+  summary.value = emptySummary(files.length)
   const firstFile = files[0]
   folderName.value = firstFile ? (firstFile.webkitRelativePath || firstFile.name).split('/')[0] || '' : ''
-  selection.value = classifyFiles(files)
   state.value = 'idle'
-
-  if (!files.length) notice.value = '沒有選取資料夾。'
-  else if (selection.value.tooMany) notice.value = '符合條件的 Excel 超過上限，最多處理 100 個。'
-  else if (!selection.value.candidates.length) notice.value = '資料夾內沒有符合命名與大小條件的 Excel。'
-  else notice.value = `已找到 ${selection.value.candidates.length} 個可處理的 Excel。`
+  notice.value = files.length
+    ? `已選取 ${files.length} 個檔案，執行後將逐一依內容檢查。`
+    : '沒有選取資料夾。'
 }
 
 async function start() {
   if (!canStart.value) return
 
-  const startedAt = new Date().toISOString()
-  const currentMonth = getTaipeiMonthInfo(startedAt)
-  const monthChanged =
-    currentMonth.year !== monthInfo.value.year || currentMonth.month !== monthInfo.value.month
-  monthInfo.value = currentMonth
-  clearResult()
-
-  if (monthChanged && !currentMonth.days.includes(checkDay.value)) {
-    checkDay.value = currentMonth.defaultDay
-    state.value = 'idle'
-    notice.value = `月份已更新，請重新確認異動檢查門檻；日期已改回 ${currentMonth.defaultDay} 號。`
+  try {
+    getTaipeiThreshold(checkDate.value)
+  } catch {
+    state.value = 'error'
+    notice.value = '請選擇有效的判斷基準日。'
     return
   }
 
+  clearResult()
   state.value = 'running'
   notice.value = '正在準備檔案…'
   progress.value = {
     stage: 'analyzing',
     completed: 0,
-    total: selection.value.candidates.length,
+    total: selectedFiles.value.length,
     currentFile: '',
+    summary: emptySummary(selectedFiles.value.length),
   }
 
   const task = startProcessing(
-    selection.value.candidates,
-    checkDay.value,
-    selection.value.records,
+    selectedFiles.value,
+    checkDate.value,
     (value) => {
       progress.value = value
+      summary.value = value.summary
       notice.value = value.stage === 'building' ? '正在產生 Excel 報表…' : `正在處理 ${value.currentFile}`
     },
     undefined,
-    startedAt,
   )
   currentTask = task
 
@@ -110,15 +121,17 @@ async function start() {
     if (currentTask !== task) return
     rows.value = result.rows
     records.value = result.records
+    summary.value = result.summary
     downloadUrl.value = URL.createObjectURL(
       new Blob([result.report], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       }),
     )
     state.value = 'completed'
+    const scanResult = `掃描 ${result.summary.scannedFiles} 個檔案，Excel ${result.summary.excelFiles} 個`
     notice.value = result.rows.length
-      ? `檢查完成，共找到 ${result.rows.length} 筆異動。`
-      : '檢查完成，沒有找到門檻後的異動資料。'
+      ? `檢查完成：${scanResult}；共找到 ${result.rows.length} 筆異動。`
+      : `檢查完成：${scanResult}；沒有找到門檻後的異動資料。`
   } catch (error) {
     if (currentTask !== task || (error instanceof DOMException && error.name === 'AbortError')) return
     state.value = 'error'
@@ -148,7 +161,7 @@ onBeforeUnmount(() => {
       <div>
         <p class="eyebrow">BROWSER WORKBOOK · LOCAL ONLY</p>
         <h1>電子發票 Excel<br />異動檢查器</h1>
-        <p class="intro">選取申報資料夾，自動略過不符條件的檔案，整理門檻日後的異動資料。</p>
+        <p class="intro">選取申報資料夾，逐一辨識檔案內容，整理基準日後的異動資料。</p>
       </div>
       <p class="privacy-mark"><span aria-hidden="true">●</span> 純前端處理，檔案不會離開這台裝置</p>
     </header>
@@ -167,7 +180,7 @@ onBeforeUnmount(() => {
           <span class="step-number" aria-hidden="true">01</span>
           <div class="step-content">
             <h3>指定申報資料</h3>
-            <p>只讀取以 8 碼統編開頭的 .xlsx；客戶資料與其他檔案會略過。</p>
+            <p>掃描選取資料夾及所有子資料夾；是否為 Excel 以檔案內容判定。</p>
             <input
               id="source-folder"
               class="file-input"
@@ -178,12 +191,8 @@ onBeforeUnmount(() => {
               @change="selectFolder"
             />
             <label class="folder-button" for="source-folder">選擇來源資料夾</label>
-            <p v-if="selectedCount" class="selection-summary">
-              {{ selectedCount }} 個檔案 · {{ selection.candidates.length }} 個待處理 ·
-              {{ ignoredCount }} 個略過
-            </p>
-            <p v-if="selection.tooMany" class="warning" role="alert">
-              符合條件的 Excel 超過上限，最多處理 100 個。請拆分資料夾後重試。
+            <p v-if="selectedFiles.length" class="selection-summary">
+              {{ selectedFiles.length }} 個檔案 · 全部將依內容掃描
             </p>
           </div>
         </li>
@@ -192,13 +201,11 @@ onBeforeUnmount(() => {
           <span class="step-number" aria-hidden="true">02</span>
           <div class="step-content">
             <h3>設定判斷基準</h3>
-            <p>只列出最後異動時間晚於台北時間門檻的資料。</p>
-            <label for="check-day">異動檢查門檻</label>
+            <p>只列出最後異動時間晚於所選日期台北時間 00:00 的資料。</p>
+            <label for="check-date">異動檢查門檻</label>
             <div class="select-row">
-              <span>{{ monthInfo.year }} 年 {{ monthInfo.month }} 月</span>
-              <select id="check-day" v-model.number="checkDay" :disabled="state === 'running'">
-                <option v-for="day in monthInfo.days" :key="day" :value="day">{{ day }} 號 00:00</option>
-              </select>
+              <input id="check-date" v-model="checkDate" type="date" required :disabled="state === 'running'" />
+              <span>台北時間 00:00</span>
             </div>
           </div>
         </li>
@@ -207,7 +214,7 @@ onBeforeUnmount(() => {
           <span class="step-number" aria-hidden="true">03</span>
           <div class="step-content">
             <h3>執行與取得報表</h3>
-            <p>檔案會依路徑循序處理；單一檔案失敗不影響其餘檔案。</p>
+            <p>檔案會依完整相對路徑循序處理；單一檔案失敗不影響其餘檔案。</p>
             <div class="actions">
               <button data-action="start" class="primary" type="button" :disabled="!canStart" @click="start">
                 開始檢查
@@ -240,6 +247,12 @@ onBeforeUnmount(() => {
                 <strong v-else>產生報表中</strong>
                 <span v-if="progress.currentFile">{{ progress.currentFile }}</span>
               </p>
+              <p class="scan-summary">
+                <span>Excel {{ progress.summary.excelFiles }}</span>
+                <span>完成 {{ progress.summary.processedExcelFiles }}</span>
+                <span>略過 {{ progress.summary.skippedExcelFiles }}</span>
+                <span>非 Excel {{ progress.summary.nonExcelFiles }}</span>
+              </p>
             </div>
           </div>
         </li>
@@ -255,6 +268,11 @@ onBeforeUnmount(() => {
         <div>
           <p class="section-kicker">檢查結果</p>
           <h2 id="results-title">異動資料 {{ rows.length }} 筆</h2>
+          <p class="result-summary">
+            掃描 {{ summary.scannedFiles }} 個檔案 · Excel {{ summary.excelFiles }} 個 · 成功
+            {{ summary.processedExcelFiles }} 個 · 略過 Excel {{ summary.skippedExcelFiles }} 個 · 非 Excel
+            {{ summary.nonExcelFiles }} 個
+          </p>
         </div>
         <a class="download" :href="downloadUrl" download="營業稅資料變更通知.xlsx">下載 Excel</a>
       </div>

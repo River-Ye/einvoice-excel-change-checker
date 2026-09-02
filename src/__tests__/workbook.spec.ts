@@ -5,19 +5,22 @@ import type { ProcessingRecord } from '../domain'
 import { handleWorkerRequest } from '../excel.worker'
 import { analyzeWorkbook, buildReport } from '../workbook'
 
-const NOW = new Date('2024-07-16T02:00:00Z')
-
-const workbookBuffer = (sheets: Record<string, unknown[][]>, date1904 = false): ArrayBuffer => {
+const workbookBuffer = (
+  sheets: Record<string, unknown[][]>,
+  date1904 = false,
+  bookType: 'xlsx' | 'xls' = 'xlsx',
+): ArrayBuffer => {
   const workbook = XLSX.utils.book_new()
   for (const [name, rows] of Object.entries(sheets)) {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name)
   }
   if (date1904) workbook.Workbook = { WBProps: { date1904: true } }
-  return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+  return XLSX.write(workbook, { bookType, type: 'array' }) as ArrayBuffer
 }
 
-const analyze = (buffer: ArrayBuffer, fileName = '00123456_發票.xlsx') =>
-  analyzeWorkbook(buffer, { fileName, checkDay: 8, now: NOW })
+const DEFAULT_PATH = '匯入資料/00123456/任意檔名.data'
+const analyze = (buffer: ArrayBuffer, relativePath = DEFAULT_PATH, taxId = '00123456') =>
+  analyzeWorkbook(buffer, { relativePath, taxId, checkDate: '2024-07-08' })
 
 describe('analyzeWorkbook', () => {
   it('uses supported sheet priority and includes only rows strictly after the threshold', () => {
@@ -40,7 +43,7 @@ describe('analyzeWorkbook', () => {
     })
 
     expect(analyze(buffer)).toEqual([
-      { taxId: '00123456', fileName: '00123456_發票.xlsx', documentNumber: 'AFTER' },
+      { taxId: '00123456', fileName: DEFAULT_PATH, documentNumber: 'AFTER' },
     ])
   })
 
@@ -83,6 +86,36 @@ describe('analyzeWorkbook', () => {
     expect(analyze(buffer)[0]?.documentNumber).toBe('DATE1904')
   })
 
+  it('reads a valid OOXML workbook regardless of its filename extension', () => {
+    const buffer = workbookBuffer({
+      Invoice: [
+        ['發票號碼', '最後異動時間'],
+        ['RENAMED', '2024-07-09 00:00:00'],
+      ],
+    })
+
+    expect(analyze(buffer, '匯入資料/00123456/報表.pdf')).toEqual([
+      { taxId: '00123456', fileName: '匯入資料/00123456/報表.pdf', documentNumber: 'RENAMED' },
+    ])
+  })
+
+  it('reads a legacy binary XLS workbook', () => {
+    const buffer = workbookBuffer(
+      {
+        Invoice: [
+          ['發票號碼', '最後異動時間'],
+          ['LEGACY', '2024-07-09 00:00:00'],
+        ],
+      },
+      false,
+      'xls',
+    )
+
+    expect(analyze(buffer, '匯入資料/00123456/無副檔名')).toEqual([
+      { taxId: '00123456', fileName: '匯入資料/00123456/無副檔名', documentNumber: 'LEGACY' },
+    ])
+  })
+
   it.each([
     [{ Other: [['發票號碼', '最後異動時間']] }, '找不到支援的工作表'],
     [{ Invoice: [['', '最後異動時間']] }, '第一欄標題'],
@@ -120,6 +153,29 @@ describe('analyzeWorkbook', () => {
 
   it('reports a corrupt file with a friendly message', () => {
     expect(() => analyze(new TextEncoder().encode('not an xlsx').buffer)).toThrow('無法讀取 Excel')
+  })
+
+  it('requires a resolved tax ID only after confirming the workbook is readable', () => {
+    const buffer = workbookBuffer({ Invoice: [['發票號碼', '最後異動時間']] })
+    const invalidRows = workbookBuffer({
+      Invoice: [
+        ['發票號碼', '最後異動時間'],
+        ['BROKEN', 'not-a-date'],
+      ],
+    })
+
+    expect(() => analyzeWorkbook(buffer, {
+      relativePath: '匯入資料/無法判定統編/報表',
+      checkDate: '2024-07-08',
+    })).toThrow('統一編號')
+    expect(() => analyzeWorkbook(invalidRows, {
+      relativePath: '匯入資料/無法判定統編/報表',
+      checkDate: '2024-07-08',
+    })).toThrow('最後異動日期無效')
+    expect(() => analyzeWorkbook(new ArrayBuffer(0), {
+      relativePath: '匯入資料/無法判定統編/壞檔',
+      checkDate: '2024-07-08',
+    })).toThrow('無法讀取 Excel')
   })
 })
 
@@ -188,15 +244,22 @@ describe('worker protocol', () => {
         id: 1,
         type: 'analyze',
         file: input,
-        fileName: '00123456_發票.xlsx',
-        checkDay: 8,
-        now: NOW.toISOString(),
+        relativePath: '匯入資料/00123456/發票.bin',
+        taxId: '00123456',
+        checkDate: '2024-07-08',
       }),
     ).toEqual({
       id: 1,
       ok: true,
       type: 'analyze',
-      rows: [{ taxId: '00123456', fileName: '00123456_發票.xlsx', documentNumber: 'AB001' }],
+      outcome: 'processed',
+      rows: [
+        {
+          taxId: '00123456',
+          fileName: '匯入資料/00123456/發票.bin',
+          documentNumber: 'AB001',
+        },
+      ],
     })
 
     const report = handleWorkerRequest({ id: 2, type: 'buildReport', rows: [], records: [] })
@@ -208,8 +271,9 @@ describe('worker protocol', () => {
         id: 3,
         type: 'analyze',
         file: new ArrayBuffer(0),
-        fileName: '00123456_壞檔.xlsx',
-        checkDay: 8,
+        relativePath: '匯入資料/00123456/壞檔',
+        taxId: '00123456',
+        checkDate: '2024-07-08',
       }),
     ).toMatchObject({ id: 3, ok: false, error: expect.stringContaining('無法讀取 Excel') })
   })

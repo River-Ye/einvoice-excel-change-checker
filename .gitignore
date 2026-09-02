@@ -40,3 +40,30 @@ __screenshots__/
 
 test-results/
 playwright-report/
+.playwright-cli/
+
+# Customer data and generated reports must never enter the repository
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+*.ods
+*.doc
+*.docx
+*.docm
+*.ppt
+*.pptx
+*.pptm
+*.rtf
+*.pdf
+*.csv
+*.tsv
+*.zip
+*.7z
+*.rar
+*.tar
+*.tgz
+*.gz
+*.bz2
+*.xz
+*.zst

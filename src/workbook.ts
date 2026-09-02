@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx'
 
 import {
+  detectFileKind,
   extractTaxId,
   getTaipeiThreshold,
   type ChangeRow,
@@ -13,9 +14,9 @@ const RESULT_HEADERS = ['統一編號', '檔案名稱', '發票號碼/折讓單�
 const RECORD_HEADERS = ['檔案／項目', '處理結果', '異動筆數', '說明']
 
 export interface AnalyzeOptions {
-  fileName: string
-  checkDay: number
-  now?: Date | string
+  relativePath: string
+  taxId?: string
+  checkDate: string
 }
 
 export function analyzeWorkbook(buffer: ArrayBuffer, options: AnalyzeOptions): ChangeRow[] {
@@ -38,12 +39,9 @@ export function analyzeWorkbook(buffer: ArrayBuffer, options: AnalyzeOptions): C
   const changedAtIndex = header.findIndex((cell) => cell === CHANGE_HEADER)
   if (changedAtIndex < 0) throw new Error(`找不到「${CHANGE_HEADER}」欄位`)
 
-  const taxId = extractTaxId(options.fileName)
-  if (!taxId) throw new Error('檔名必須以 8 碼統一編號及底線開頭')
-
-  const threshold = getTaipeiThreshold(options.checkDay, options.now)
+  const threshold = getTaipeiThreshold(options.checkDate)
   const date1904 = workbook.Workbook?.WBProps?.date1904 === true
-  const changes: ChangeRow[] = []
+  const changedDocumentNumbers: string[] = []
 
   rows.slice(1).forEach((row, index) => {
     if (row.every(isBlank)) return
@@ -54,10 +52,19 @@ export function analyzeWorkbook(buffer: ArrayBuffer, options: AnalyzeOptions): C
     const changedAt = parseDateCell(row[changedAtIndex], date1904)
     if (changedAt === undefined) throw new Error(`第 ${index + 2} 列的最後異動日期無效`)
 
-    if (changedAt > threshold) changes.push({ taxId, fileName: options.fileName, documentNumber })
+    if (changedAt > threshold) {
+      changedDocumentNumbers.push(documentNumber)
+    }
   })
 
-  return changes
+  const taxId = options.taxId ?? extractTaxId(options.relativePath)
+  if (!taxId) throw new Error('無法判定統一編號')
+
+  return changedDocumentNumbers.map((documentNumber) => ({
+    taxId,
+    fileName: options.relativePath,
+    documentNumber,
+  }))
 }
 
 export function buildReport(rows: ChangeRow[], records: ProcessingRecord[]): ArrayBuffer {
@@ -89,9 +96,9 @@ export function buildReport(rows: ChangeRow[], records: ProcessingRecord[]): Arr
 }
 
 function readWorkbook(buffer: ArrayBuffer): XLSX.WorkBook {
-  const signature = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 4))
-  if (signature.length < 4 || signature[0] !== 0x50 || signature[1] !== 0x4b) {
-    throw new Error('無法讀取 Excel：檔案不是有效的 XLSX')
+  const kind = detectFileKind(buffer)
+  if (kind !== 'ooxml' && kind !== 'xls') {
+    throw new Error('無法讀取 Excel：檔案不是有效的 Excel 工作簿')
   }
 
   try {

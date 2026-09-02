@@ -1,14 +1,18 @@
-import type { ChangeRow, ProcessingRecord } from './domain'
+import { detectFileKind, type ChangeRow, type ProcessingRecord } from './domain'
 import { analyzeWorkbook, buildReport } from './workbook'
+
+export type AnalyzeOutcome =
+  | { outcome: 'processed'; rows: ChangeRow[] }
+  | { outcome: 'workbook-skipped' | 'non-workbook'; message: string; rows: ChangeRow[] }
 
 export type WorkerRequest =
   | {
       id: number
       type: 'analyze'
       file: ArrayBuffer
-      fileName: string
-      checkDay: number
-      now?: string
+      relativePath: string
+      taxId?: string
+      checkDate: string
     }
   | {
       id: number
@@ -18,22 +22,37 @@ export type WorkerRequest =
     }
 
 export type WorkerResponse =
-  | { id: number; ok: true; type: 'analyze'; rows: ChangeRow[] }
+  | ({ id: number; ok: true; type: 'analyze' } & AnalyzeOutcome)
   | { id: number; ok: true; type: 'buildReport'; file: ArrayBuffer }
   | { id: number; ok: false; error: string }
 
 export function handleWorkerRequest(request: WorkerRequest): WorkerResponse {
   try {
     if (request.type === 'analyze') {
-      return {
-        id: request.id,
-        ok: true,
-        type: 'analyze',
-        rows: analyzeWorkbook(request.file, {
-          fileName: request.fileName,
-          checkDay: request.checkDay,
-          now: request.now,
-        }),
+      try {
+        return {
+          id: request.id,
+          ok: true,
+          type: 'analyze',
+          outcome: 'processed',
+          rows: analyzeWorkbook(request.file, {
+            relativePath: request.relativePath,
+            taxId: request.taxId,
+            checkDate: request.checkDate,
+          }),
+        }
+      } catch (error) {
+        const kind = detectFileKind(request.file)
+        if (kind !== 'ooxml' && kind !== 'xls') throw error
+        const message = error instanceof Error ? error.message : '無法處理 Excel 活頁簿'
+        return {
+          id: request.id,
+          ok: true,
+          type: 'analyze',
+          outcome: message.startsWith('無法讀取 Excel') ? 'non-workbook' : 'workbook-skipped',
+          message: message.startsWith('無法讀取 Excel') ? '不是 Excel 活頁簿' : message,
+          rows: [],
+        }
       }
     }
 

@@ -46,6 +46,7 @@ label {
 button:focus-visible,
 a:focus-visible,
 select:focus-visible,
+input[type="date"]:focus-visible,
 .file-input:focus-visible + .folder-button {
   outline: 3px solid #f0a45d;
   outline-offset: 3px;
@@ -277,6 +278,14 @@ select {
   background: var(--paper);
 }
 
+input[type="date"] {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  background: var(--paper);
+}
+
 .actions {
   display: flex;
   gap: 10px;
@@ -327,6 +336,19 @@ progress {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.scan-summary {
+  justify-content: flex-start !important;
+  flex-wrap: wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.result-summary {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
 }
 
 .notice {
@@ -494,6 +516,10 @@ summary {
   }
 
   select {
+    width: 100%;
+  }
+
+  input[type="date"] {
     width: 100%;
   }
 

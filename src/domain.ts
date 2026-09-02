@@ -1,6 +1,7 @@
 export const MAX_FILE_BYTES = 100 * 1024 * 1024
-export const MAX_CANDIDATE_FILES = 100
-export const DEFAULT_CHECK_DAY = 8
+const DEFAULT_CHECK_DAY = 8
+
+export type FileKind = 'ooxml' | 'xls' | 'pdf' | 'other'
 
 export interface ChangeRow {
   taxId: string
@@ -15,85 +16,71 @@ export interface ProcessingRecord {
   message: string
 }
 
-export interface ClassifiedFiles {
-  candidates: File[]
-  records: ProcessingRecord[]
-  tooMany: boolean
-}
-
-export interface TaipeiMonthInfo {
-  year: number
-  month: number
-  days: number[]
-  defaultDay: number
-}
-
 export const relativeFilePath = (file: File): string => file.webkitRelativePath || file.name
 
-export const extractTaxId = (fileName: string): string | undefined => fileName.match(/^(\d{8})_/)?.[1]
+export const sortFiles = (files: Iterable<File>): File[] =>
+  [...files].sort((a, b) => relativeFilePath(a).localeCompare(relativeFilePath(b)))
 
-export function classifyFiles(files: Iterable<File>): ClassifiedFiles {
-  const candidates: File[] = []
-  const records: ProcessingRecord[] = []
-  let otherFileCount = 0
-
-  for (const file of [...files].sort((a, b) => relativeFilePath(a).localeCompare(relativeFilePath(b)))) {
-    const item = relativeFilePath(file)
-    const lowerName = file.name.toLocaleLowerCase()
-
-    if (!lowerName.endsWith('.xlsx')) {
-      otherFileCount += 1
-    } else if (lowerName.includes('客戶資料.xlsx')) {
-      records.push(skipped(item, '客戶資料檔案不在處理範圍'))
-    } else if (!extractTaxId(file.name)) {
-      records.push(skipped(item, '檔名必須以 8 碼統一編號及底線開頭'))
-    } else if (file.size > MAX_FILE_BYTES) {
-      records.push(skipped(item, '檔案超過 100 MiB'))
-    } else {
-      candidates.push(file)
-    }
+export function detectFileKind(header: ArrayBuffer): FileKind {
+  const bytes = new Uint8Array(header)
+  if (
+    bytes.length >= 8 &&
+    [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((byte, index) => bytes[index] === byte)
+  ) {
+    return 'xls'
   }
-
-  if (otherFileCount > 0) {
-    records.push(skipped('其他副檔名', `已略過 ${otherFileCount} 個非 XLSX 檔案`))
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    ((bytes[2] === 0x03 && bytes[3] === 0x04) ||
+      (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+      (bytes[2] === 0x07 && bytes[3] === 0x08))
+  ) {
+    return 'ooxml'
   }
-
-  return { candidates, records, tooMany: candidates.length > MAX_CANDIDATE_FILES }
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46
+  ) {
+    return 'pdf'
+  }
+  return 'other'
 }
 
-export function getTaipeiMonthInfo(now: Date | string = new Date()): TaipeiMonthInfo {
-  const date = typeof now === 'string' ? new Date(now) : now
-  if (Number.isNaN(date.getTime())) throw new Error('無效的執行時間')
+export function extractTaxId(relativePath: string): string | undefined {
+  const parts = relativePath.split(/[\\/]/)
+  const fileName = parts.pop() ?? ''
 
-  const parts = new Intl.DateTimeFormat('en-US', {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (/^\d{8}$/.test(parts[index] ?? '')) return parts[index]
+  }
+
+  const matches = [...fileName.matchAll(/(?:^|\D)(\d{8})(?!\d)/g)].map((match) => match[1])
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+export function getDefaultCheckDate(now = new Date()): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
-    month: 'numeric',
-  }).formatToParts(date)
-  const year = Number(parts.find(({ type }) => type === 'year')?.value)
-  const month = Number(parts.find(({ type }) => type === 'month')?.value)
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    month: '2-digit',
+  }).formatToParts(now).map(({ type, value }) => [type, value]))
+  return `${parts.year}-${parts.month}-${String(DEFAULT_CHECK_DAY).padStart(2, '0')}`
+}
 
-  return {
-    year,
-    month,
-    days: Array.from({ length: daysInMonth }, (_, index) => index + 1),
-    defaultDay: DEFAULT_CHECK_DAY,
+export function getTaipeiThreshold(checkDate: string): number {
+  const match = checkDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) throw new RangeError('請選擇有效日期')
+  const [, yearText, monthText, dayText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) {
+    throw new RangeError('請選擇有效日期')
   }
+  return Date.parse(`${checkDate}T00:00:00+08:00`)
 }
-
-export function getTaipeiThreshold(day: number, now: Date | string = new Date()): number {
-  const { year, month, days } = getTaipeiMonthInfo(now)
-  if (!Number.isInteger(day) || !days.includes(day)) throw new RangeError('請選擇當月有效日期')
-
-  return Date.parse(
-    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00+08:00`,
-  )
-}
-
-const skipped = (item: string, message: string): ProcessingRecord => ({
-  item,
-  status: 'skipped',
-  changeCount: 0,
-  message,
-})
