@@ -37,7 +37,32 @@
 
 工具不限制解壓後大小、壓縮比、列數或處理時間。惡意或極端的 ZIP／XML bomb 即使原始檔不超過 100 MiB，仍可能耗盡分頁或 Web Worker 的記憶體；請只處理可信來源，必要時關閉分頁中止作業。
 
-## 本機開發
+## 本機啟動
+
+兩種方式啟動後，皆使用 Chrome 開啟 <http://localhost:5173/einvoice-excel-change-checker/>。
+
+### 使用 Docker
+
+需要 Docker Desktop（含 Docker Compose）。
+
+```sh
+docker compose up --build
+```
+
+服務只綁定本機 `127.0.0.1:5173`。原始碼會掛載至容器，修改後由 Vite 自動熱更新。停止時先按 `Ctrl+C`，再執行：
+
+```sh
+docker compose down
+```
+
+若 `package.json` 或 `package-lock.json` 有變更，請重建套件 volume：
+
+```sh
+docker compose down -v
+docker compose up --build
+```
+
+### 不使用 Docker
 
 需要 Node.js 22.12 以上。
 
@@ -46,7 +71,15 @@ npm ci
 npm run dev
 ```
 
-驗證：
+## 本機驗證
+
+Docker 執行中可驗證單元測試、coverage、型別與 production build：
+
+```sh
+docker compose exec app npm run check
+```
+
+完整驗證在本機執行：
 
 ```sh
 npm run guard:data
