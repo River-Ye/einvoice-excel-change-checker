@@ -41,7 +41,7 @@ async function nextTick(times = 12) {
 }
 
 describe('startProcessing', () => {
-  it('掃描所有檔案，只把內容候選循序送進 Worker，並傳完整路徑、統編與日期', async () => {
+  it('掃描所有檔案，只把內容候選循序送進 Worker，並傳完整路徑與日期但不傳統編', async () => {
     const processed = file('任意名稱.data', '來源/12345678/任意名稱.data', signatures.ooxml)
     const unsupported = file(
       '87654321_舊格式.bin',
@@ -70,11 +70,11 @@ describe('startProcessing', () => {
       expect.objectContaining({
         type: 'analyze',
         relativePath: '來源/12345678/任意名稱.data',
-        taxId: '12345678',
         checkDate: '2026-07-08',
       }),
       expect.any(Array),
     )
+    expect(workers[0]?.postMessage.mock.calls[0]?.[0]).not.toHaveProperty('taxId')
     expect(workers[0]?.postMessage.mock.calls[0]?.[0]).not.toHaveProperty('checkDay')
     expect(workers[0]?.postMessage.mock.calls[0]?.[0]).not.toHaveProperty('now')
 
@@ -100,10 +100,10 @@ describe('startProcessing', () => {
       expect.objectContaining({
         type: 'analyze',
         relativePath: '來源/子資料/87654321_舊格式.bin',
-        taxId: '87654321',
         checkDate: '2026-07-08',
       }),
     )
+    expect(workers[1]?.postMessage.mock.calls[0]?.[0]).not.toHaveProperty('taxId')
 
     workers[1]?.onmessage?.({
       data: {
@@ -123,7 +123,7 @@ describe('startProcessing', () => {
         checkDate: '2026-07-08',
       }),
     )
-    expect(workers[2]?.postMessage.mock.calls[0]?.[0].taxId).toBeUndefined()
+    expect(workers[2]?.postMessage.mock.calls[0]?.[0]).not.toHaveProperty('taxId')
 
     workers[2]?.onmessage?.({
       data: {

@@ -51,18 +51,6 @@ export function detectFileKind(header: ArrayBuffer): FileKind {
   return 'other'
 }
 
-export function extractTaxId(relativePath: string): string | undefined {
-  const parts = relativePath.split(/[\\/]/)
-  const fileName = parts.pop() ?? ''
-
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    if (/^\d{8}$/.test(parts[index] ?? '')) return parts[index]
-  }
-
-  const matches = [...fileName.matchAll(/(?:^|\D)(\d{8})(?!\d)/g)].map((match) => match[1])
-  return matches.length === 1 ? matches[0] : undefined
-}
-
 export function getDefaultCheckDate(now = new Date()): string {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Taipei',

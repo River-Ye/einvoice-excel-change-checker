@@ -24,15 +24,23 @@ async function writeWorkbook(
   path: string,
   sheetName: string,
   documentNumber: string,
+  buyerTaxIds: Array<string | number>,
   bookType: 'xlsx' | 'xls' = 'xlsx',
 ) {
   const workbook = XLSX.utils.book_new()
   const worksheet = XLSX.utils.aoa_to_sheet([
-    [sheetName === 'allowance' ? '折讓單號碼' : '發票號碼', '最後異動時間'],
-    [documentNumber, '2026/07/08 00:00:01'],
-    [`${documentNumber}-門檻日`, '2026/07/08 00:00:00'],
-    [`${documentNumber}-門檻前`, '2026/07/07 23:59:59'],
+    [sheetName === 'allowance' ? '折讓單號碼' : '發票號碼', '最後異動時間', '買方統一編號'],
+    ...buyerTaxIds.map((taxId, index) => [
+      index === 0 ? documentNumber : `${documentNumber}-${index + 1}`,
+      '2026/07/08 00:00:01',
+      taxId,
+    ]),
+    [`${documentNumber}-門檻日`, '2026/07/08 00:00:00', '77778888'],
+    [`${documentNumber}-門檻前`, '2026/07/07 23:59:59', '88889999'],
   ])
+  buyerTaxIds.forEach((taxId, index) => {
+    if (typeof taxId === 'number') worksheet[`C${index + 2}`]!.z = '00000000'
+  })
 
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
   await mkdir(dirname(path), { recursive: true })
@@ -53,13 +61,28 @@ test('遞迴掃描內容可辨識的 Excel，依完整路徑產生報表', async
   page.on('request', (request) => requestedOrigins.add(new URL(request.url()).origin))
 
   try {
-    await writeWorkbook(join(source, '12345678/deep/arbitrary.data'), 'Invoice', 'OOXML-AFTER')
-    await writeWorkbook(join(source, '23456789/legacy.xls'), 'btb411w_xls1', 'XLS-AFTER', 'xls')
-    await writeWorkbook(join(source, '34567890/allowance.bin'), 'allowance', 'ALLOWANCE-AFTER')
-    await writeWorkbook(join(source, 'misc/customer-45678901-export.weird'), 'Invoice', 'FALLBACK-AFTER')
-    await writeWorkbook(join(source, '56789012/no-supported-sheet.zip'), 'Other', 'UNSUPPORTED')
-    await writeWorkbook(join(source, '87654321/a/same-name.xlsx'), 'Invoice', 'SAME-A')
-    await writeWorkbook(join(source, '87654321/b/same-name.xlsx'), 'Invoice', 'SAME-B')
+    await writeWorkbook(join(source, '12345678/deep/arbitrary.data'), 'Invoice', 'OOXML-AFTER', [
+      '11112222',
+      '0000000000',
+    ])
+    await writeWorkbook(join(source, '23456789/legacy.xls'), 'btb411w_xls1', 'XLS-AFTER', [
+      1234567,
+    ], 'xls')
+    await writeWorkbook(join(source, '34567890/allowance.bin'), 'allowance', 'ALLOWANCE-AFTER', [
+      '22223333',
+    ])
+    await writeWorkbook(join(source, 'misc/customer-45678901-export.weird'), 'Invoice', 'FALLBACK-AFTER', [
+      '33334444',
+    ])
+    await writeWorkbook(join(source, '56789012/no-supported-sheet.zip'), 'Other', 'UNSUPPORTED', [
+      '66667777',
+    ])
+    await writeWorkbook(join(source, '87654321/a/same-name.xlsx'), 'Invoice', 'SAME-A', [
+      '44445555',
+    ])
+    await writeWorkbook(join(source, '87654321/b/same-name.xlsx'), 'Invoice', 'SAME-B', [
+      '55556666',
+    ])
     await mkdir(join(source, '99999999'), { recursive: true })
     await writeFile(join(source, '99999999/fake.xlsx'), '%PDF-1.7\nnot a workbook')
     await mkdir(join(source, 'notes'), { recursive: true })
@@ -85,12 +108,13 @@ test('遞迴掃描內容可辨識的 Excel，依完整路徑產生報表', async
     )
 
     const resultRows = [
-      ['12345678', relative('12345678/deep/arbitrary.data'), 'OOXML-AFTER'],
-      ['23456789', relative('23456789/legacy.xls'), 'XLS-AFTER'],
-      ['34567890', relative('34567890/allowance.bin'), 'ALLOWANCE-AFTER'],
-      ['87654321', relative('87654321/a/same-name.xlsx'), 'SAME-A'],
-      ['87654321', relative('87654321/b/same-name.xlsx'), 'SAME-B'],
-      ['45678901', relative('misc/customer-45678901-export.weird'), 'FALLBACK-AFTER'],
+      ['11112222', relative('12345678/deep/arbitrary.data'), 'OOXML-AFTER'],
+      ['0000000000', relative('12345678/deep/arbitrary.data'), 'OOXML-AFTER-2'],
+      ['01234567', relative('23456789/legacy.xls'), 'XLS-AFTER'],
+      ['22223333', relative('34567890/allowance.bin'), 'ALLOWANCE-AFTER'],
+      ['44445555', relative('87654321/a/same-name.xlsx'), 'SAME-A'],
+      ['55556666', relative('87654321/b/same-name.xlsx'), 'SAME-B'],
+      ['33334444', relative('misc/customer-45678901-export.weird'), 'FALLBACK-AFTER'],
     ]
     const resultsTable = page.locator('[data-table="results"]')
     for (const heading of ['統一編號', '檔案名稱', '發票號碼/折讓單號碼']) {

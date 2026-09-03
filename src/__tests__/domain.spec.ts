@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import * as domain from '../domain'
 import {
   detectFileKind,
-  extractTaxId,
   getDefaultCheckDate,
   getTaipeiThreshold,
   sortFiles,
@@ -47,20 +47,9 @@ describe('detectFileKind', () => {
   })
 })
 
-describe('extractTaxId', () => {
-  it('prefers the nearest exactly-eight-digit directory', () => {
-    expect(extractTaxId('匯入/87654321/月份/12345678_發票.data')).toBe('87654321')
-    expect(extractTaxId('匯入/11112222/33334444/發票')).toBe('33334444')
-  })
-
-  it('falls back to the only standalone eight-digit number in the filename', () => {
-    expect(extractTaxId('20260716下載/任意名稱/發票-00123456-final.bin')).toBe('00123456')
-    expect(extractTaxId('匯入/發票-001234567-final.bin')).toBeUndefined()
-  })
-
-  it('does not guess when the filename has multiple candidates or none', () => {
-    expect(extractTaxId('匯入/12345678_87654321_發票')).toBeUndefined()
-    expect(extractTaxId('匯入/沒有統編的發票')).toBeUndefined()
+describe('tax ID source', () => {
+  it('does not expose path or filename tax ID inference', () => {
+    expect(domain).not.toHaveProperty('extractTaxId')
   })
 })
 

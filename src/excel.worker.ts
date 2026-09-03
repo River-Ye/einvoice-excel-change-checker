@@ -11,7 +11,6 @@ export type WorkerRequest =
       type: 'analyze'
       file: ArrayBuffer
       relativePath: string
-      taxId?: string
       checkDate: string
     }
   | {
@@ -37,7 +36,6 @@ export function handleWorkerRequest(request: WorkerRequest): WorkerResponse {
           outcome: 'processed',
           rows: analyzeWorkbook(request.file, {
             relativePath: request.relativePath,
-            taxId: request.taxId,
             checkDate: request.checkDate,
           }),
         }

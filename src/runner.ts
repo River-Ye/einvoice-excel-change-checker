@@ -1,7 +1,6 @@
 import {
   MAX_FILE_BYTES,
   detectFileKind,
-  extractTaxId,
   getTaipeiThreshold,
   relativeFilePath,
   sortFiles,
@@ -139,7 +138,6 @@ export function startProcessing(
             type: 'analyze',
             file: buffer,
             relativePath: item,
-            taxId: extractTaxId(item),
             checkDate,
           },
           [buffer],

@@ -18,32 +18,32 @@ const workbookBuffer = (
   return XLSX.write(workbook, { bookType, type: 'array' }) as ArrayBuffer
 }
 
-const DEFAULT_PATH = '匯入資料/00123456/任意檔名.data'
-const analyze = (buffer: ArrayBuffer, relativePath = DEFAULT_PATH, taxId = '00123456') =>
-  analyzeWorkbook(buffer, { relativePath, taxId, checkDate: '2024-07-08' })
+const DEFAULT_PATH = '匯入資料/11112222/誤導統編_33334444.data'
+const analyze = (buffer: ArrayBuffer, relativePath = DEFAULT_PATH) =>
+  analyzeWorkbook(buffer, { relativePath, checkDate: '2024-07-08' })
 
 describe('analyzeWorkbook', () => {
   it('uses supported sheet priority and includes only rows strictly after the threshold', () => {
     const buffer = workbookBuffer({
       allowance: [
-        ['折讓單號碼', '最後異動時間'],
-        ['ALLOWANCE', '2024-07-09 00:00:00'],
+        ['折讓單號碼', '最後異動時間', '買方統一編號'],
+        ['ALLOWANCE', '2024-07-09 00:00:00', '55556666'],
       ],
       btb411w_xls1: [
-        ['發票號碼', '最後異動時間'],
-        ['NEW', '2024/07/09 00:00:00'],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['NEW', '2024/07/09 00:00:00', '66667777'],
       ],
       Invoice: [
-        ['發票號碼', '最後異動時間'],
-        ['BEFORE', '2024-07-07 23:59:59'],
-        ['EQUAL', '2024-07-08 00:00:00'],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['BEFORE', '2024-07-07 23:59:59', 'not-used'],
+        ['EQUAL', '2024-07-08 00:00:00', null],
         [],
-        ['AFTER', '2024-07-08 00:00:01'],
+        ['AFTER', '2024-07-08 00:00:01', '87654321'],
       ],
     })
 
     expect(analyze(buffer)).toEqual([
-      { taxId: '00123456', fileName: DEFAULT_PATH, documentNumber: 'AFTER' },
+      { taxId: '87654321', fileName: DEFAULT_PATH, documentNumber: 'AFTER' },
     ])
   })
 
@@ -51,8 +51,8 @@ describe('analyzeWorkbook', () => {
     const firstHeader = sheetName === 'allowance' ? '折讓單號碼' : '發票號碼'
     const buffer = workbookBuffer({
       [sheetName]: [
-        [firstHeader, '最後異動時間'],
-        ['00001234', '2024-07-09 12:34:56'],
+        [firstHeader, '最後異動時間', '買方統一編號'],
+        ['00001234', '2024-07-09 12:34:56', '12345678'],
       ],
     })
 
@@ -62,8 +62,8 @@ describe('analyzeWorkbook', () => {
   it('accepts an Excel date cell', () => {
     const buffer = workbookBuffer({
       Invoice: [
-        ['發票號碼', '最後異動時間'],
-        ['SERIAL', new Date('2024-07-09T04:00:00Z')],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['SERIAL', new Date('2024-07-09T04:00:00Z'), '12345678'],
       ],
     })
 
@@ -76,8 +76,8 @@ describe('analyzeWorkbook', () => {
     const buffer = workbookBuffer(
       {
         Invoice: [
-          ['發票號碼', '最後異動時間'],
-          ['DATE1904', july9In1904System],
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['DATE1904', july9In1904System, '12345678'],
         ],
       },
       true,
@@ -89,13 +89,13 @@ describe('analyzeWorkbook', () => {
   it('reads a valid OOXML workbook regardless of its filename extension', () => {
     const buffer = workbookBuffer({
       Invoice: [
-        ['發票號碼', '最後異動時間'],
-        ['RENAMED', '2024-07-09 00:00:00'],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['RENAMED', '2024-07-09 00:00:00', '87654321'],
       ],
     })
 
-    expect(analyze(buffer, '匯入資料/00123456/報表.pdf')).toEqual([
-      { taxId: '00123456', fileName: '匯入資料/00123456/報表.pdf', documentNumber: 'RENAMED' },
+    expect(analyze(buffer, '匯入資料/11112222/33334444_報表.pdf')).toEqual([
+      { taxId: '87654321', fileName: '匯入資料/11112222/33334444_報表.pdf', documentNumber: 'RENAMED' },
     ])
   })
 
@@ -103,28 +103,29 @@ describe('analyzeWorkbook', () => {
     const buffer = workbookBuffer(
       {
         Invoice: [
-          ['發票號碼', '最後異動時間'],
-          ['LEGACY', '2024-07-09 00:00:00'],
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['LEGACY', '2024-07-09 00:00:00', '87654321'],
         ],
       },
       false,
       'xls',
     )
 
-    expect(analyze(buffer, '匯入資料/00123456/無副檔名')).toEqual([
-      { taxId: '00123456', fileName: '匯入資料/00123456/無副檔名', documentNumber: 'LEGACY' },
+    expect(analyze(buffer, '匯入資料/11112222/33334444_無副檔名')).toEqual([
+      { taxId: '87654321', fileName: '匯入資料/11112222/33334444_無副檔名', documentNumber: 'LEGACY' },
     ])
   })
 
   it.each([
-    [{ Other: [['發票號碼', '最後異動時間']] }, '找不到支援的工作表'],
-    [{ Invoice: [['', '最後異動時間']] }, '第一欄標題'],
-    [{ Invoice: [['發票號碼', '異動時間']] }, '最後異動時間'],
+    [{ Other: [['發票號碼', '最後異動時間', '買方統一編號']] }, '找不到支援的工作表'],
+    [{ Invoice: [['', '最後異動時間', '買方統一編號']] }, '第一欄標題'],
+    [{ Invoice: [['發票號碼', '異動時間', '買方統一編號']] }, '最後異動時間'],
+    [{ Invoice: [['發票號碼', '最後異動時間', '買方統一編號 ']] }, '買方統一編號'],
     [
       {
         Invoice: [
-          ['發票號碼', '最後異動時間'],
-          ['', '2024-07-09 00:00:00'],
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['', '2024-07-09 00:00:00', '12345678'],
         ],
       },
       '號碼',
@@ -132,8 +133,8 @@ describe('analyzeWorkbook', () => {
     [
       {
         Invoice: [
-          ['發票號碼', '最後異動時間'],
-          ['BROKEN', 'not-a-date'],
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['BROKEN', 'not-a-date', '12345678'],
         ],
       },
       '日期',
@@ -141,8 +142,8 @@ describe('analyzeWorkbook', () => {
     [
       {
         Invoice: [
-          ['發票號碼', '最後異動時間'],
-          ['IMPOSSIBLE', '2024-02-30T00:00:00Z'],
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['IMPOSSIBLE', '2024-02-30T00:00:00Z', '12345678'],
         ],
       },
       '日期',
@@ -155,27 +156,68 @@ describe('analyzeWorkbook', () => {
     expect(() => analyze(new TextEncoder().encode('not an xlsx').buffer)).toThrow('無法讀取 Excel')
   })
 
-  it('requires a resolved tax ID only after confirming the workbook is readable', () => {
-    const buffer = workbookBuffer({ Invoice: [['發票號碼', '最後異動時間']] })
-    const invalidRows = workbookBuffer({
+  it('reads and trims the buyer tax ID independently for every changed row', () => {
+    const buffer = workbookBuffer({
       Invoice: [
-        ['發票號碼', '最後異動時間'],
-        ['BROKEN', 'not-a-date'],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['FIRST', '2024-07-08 00:00:01', ' 12345678 '],
+        ['SECOND', '2024-07-09 00:00:00', '87654321'],
+        ['ZERO', '2024-07-10 00:00:00', '0000000000'],
       ],
     })
 
-    expect(() => analyzeWorkbook(buffer, {
-      relativePath: '匯入資料/無法判定統編/報表',
-      checkDate: '2024-07-08',
-    })).toThrow('統一編號')
-    expect(() => analyzeWorkbook(invalidRows, {
-      relativePath: '匯入資料/無法判定統編/報表',
-      checkDate: '2024-07-08',
-    })).toThrow('最後異動日期無效')
-    expect(() => analyzeWorkbook(new ArrayBuffer(0), {
-      relativePath: '匯入資料/無法判定統編/壞檔',
-      checkDate: '2024-07-08',
-    })).toThrow('無法讀取 Excel')
+    expect(analyze(buffer).map(({ taxId, documentNumber }) => ({ taxId, documentNumber }))).toEqual([
+      { taxId: '12345678', documentNumber: 'FIRST' },
+      { taxId: '87654321', documentNumber: 'SECOND' },
+      { taxId: '0000000000', documentNumber: 'ZERO' },
+    ])
+  })
+
+  it('uses the displayed buyer tax ID to preserve a numeric cell leading zero', () => {
+    const buffer = workbookBuffer({
+      Invoice: [
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['FORMATTED', '2024-07-09 00:00:00', { t: 'n', v: 1234567, z: '00000000' }],
+      ],
+    })
+
+    expect(analyze(buffer)[0]?.taxId).toBe('01234567')
+  })
+
+  it('does not validate a buyer tax ID on rows at or before the threshold', () => {
+    const buffer = workbookBuffer({
+      Invoice: [
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['BEFORE', '2024-07-07 23:59:59', 'invalid-before'],
+        ['EQUAL', '2024-07-08 00:00:00', null],
+        ['AFTER', '2024-07-08 00:00:01', '12345678'],
+      ],
+    })
+
+    expect(analyze(buffer)).toEqual([
+      { taxId: '12345678', fileName: DEFAULT_PATH, documentNumber: 'AFTER' },
+    ])
+  })
+
+  it.each([null, '', '1234567', '1234567890', 'ABCDEFGH'])(
+    'rejects an invalid buyer tax ID on a changed row without returning partial rows: %s',
+    (taxId) => {
+      const buffer = workbookBuffer({
+        Invoice: [
+          ['發票號碼', '最後異動時間', '買方統一編號'],
+          ['VALID-FIRST', '2024-07-09 00:00:00', '12345678'],
+          ['INVALID-SECOND', '2024-07-10 00:00:00', taxId],
+        ],
+      })
+
+      expect(() => analyze(buffer)).toThrow('第 3 列的買方統一編號無效')
+    },
+  )
+
+  it('reports workbook errors before considering any path or filename digits', () => {
+    expect(() => analyze(new ArrayBuffer(0), '匯入資料/12345678/87654321_壞檔')).toThrow(
+      '無法讀取 Excel',
+    )
   })
 })
 
@@ -234,8 +276,8 @@ describe('worker protocol', () => {
   it('handles analyze, report, and friendly error responses', () => {
     const input = workbookBuffer({
       Invoice: [
-        ['發票號碼', '最後異動時間'],
-        ['AB001', '2024-07-09 00:00:00'],
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['AB001', '2024-07-09 00:00:00', '87654321'],
       ],
     })
 
@@ -244,8 +286,7 @@ describe('worker protocol', () => {
         id: 1,
         type: 'analyze',
         file: input,
-        relativePath: '匯入資料/00123456/發票.bin',
-        taxId: '00123456',
+        relativePath: '匯入資料/11112222/33334444_發票.bin',
         checkDate: '2024-07-08',
       }),
     ).toEqual({
@@ -255,8 +296,8 @@ describe('worker protocol', () => {
       outcome: 'processed',
       rows: [
         {
-          taxId: '00123456',
-          fileName: '匯入資料/00123456/發票.bin',
+          taxId: '87654321',
+          fileName: '匯入資料/11112222/33334444_發票.bin',
           documentNumber: 'AB001',
         },
       ],
@@ -271,10 +312,36 @@ describe('worker protocol', () => {
         id: 3,
         type: 'analyze',
         file: new ArrayBuffer(0),
-        relativePath: '匯入資料/00123456/壞檔',
-        taxId: '00123456',
+        relativePath: '匯入資料/11112222/33334444_壞檔',
         checkDate: '2024-07-08',
       }),
     ).toMatchObject({ id: 3, ok: false, error: expect.stringContaining('無法讀取 Excel') })
+  })
+
+  it('skips a whole workbook and returns no partial rows when a changed buyer tax ID is invalid', () => {
+    const input = workbookBuffer({
+      Invoice: [
+        ['發票號碼', '最後異動時間', '買方統一編號'],
+        ['VALID-FIRST', '2024-07-09 00:00:00', '12345678'],
+        ['INVALID-SECOND', '2024-07-10 00:00:00', 'not-a-tax-id'],
+      ],
+    })
+
+    expect(
+      handleWorkerRequest({
+        id: 4,
+        type: 'analyze',
+        file: input,
+        relativePath: '匯入資料/11112222/33334444_發票.bin',
+        checkDate: '2024-07-08',
+      }),
+    ).toEqual({
+      id: 4,
+      ok: true,
+      type: 'analyze',
+      outcome: 'workbook-skipped',
+      message: '第 3 列的買方統一編號無效',
+      rows: [],
+    })
   })
 })

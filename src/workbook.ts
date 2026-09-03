@@ -2,7 +2,6 @@ import * as XLSX from 'xlsx'
 
 import {
   detectFileKind,
-  extractTaxId,
   getTaipeiThreshold,
   type ChangeRow,
   type ProcessingRecord,
@@ -10,12 +9,12 @@ import {
 
 const SUPPORTED_SHEETS = ['Invoice', 'btb411w_xls1', 'allowance'] as const
 const CHANGE_HEADER = '最後異動時間'
+const BUYER_TAX_ID_HEADER = '買方統一編號'
 const RESULT_HEADERS = ['統一編號', '檔案名稱', '發票號碼/折讓單號碼']
 const RECORD_HEADERS = ['檔案／項目', '處理結果', '異動筆數', '說明']
 
 export interface AnalyzeOptions {
   relativePath: string
-  taxId?: string
   checkDate: string
 }
 
@@ -38,10 +37,13 @@ export function analyzeWorkbook(buffer: ArrayBuffer, options: AnalyzeOptions): C
 
   const changedAtIndex = header.findIndex((cell) => cell === CHANGE_HEADER)
   if (changedAtIndex < 0) throw new Error(`找不到「${CHANGE_HEADER}」欄位`)
+  const buyerTaxIdIndex = header.findIndex((cell) => cell === BUYER_TAX_ID_HEADER)
+  if (buyerTaxIdIndex < 0) throw new Error(`找不到「${BUYER_TAX_ID_HEADER}」欄位`)
 
   const threshold = getTaipeiThreshold(options.checkDate)
   const date1904 = workbook.Workbook?.WBProps?.date1904 === true
-  const changedDocumentNumbers: string[] = []
+  const denseRows = (sheet as XLSX.DenseWorkSheet)['!data']
+  const changedRows: ChangeRow[] = []
 
   rows.slice(1).forEach((row, index) => {
     if (row.every(isBlank)) return
@@ -52,19 +54,15 @@ export function analyzeWorkbook(buffer: ArrayBuffer, options: AnalyzeOptions): C
     const changedAt = parseDateCell(row[changedAtIndex], date1904)
     if (changedAt === undefined) throw new Error(`第 ${index + 2} 列的最後異動日期無效`)
 
-    if (changedAt > threshold) {
-      changedDocumentNumbers.push(documentNumber)
-    }
+    if (changedAt <= threshold) return
+
+    const taxId = toBuyerTaxId(denseRows[index + 1]?.[buyerTaxIdIndex]?.w ?? row[buyerTaxIdIndex])
+    if (!taxId) throw new Error(`第 ${index + 2} 列的買方統一編號無效`)
+
+    changedRows.push({ taxId, fileName: options.relativePath, documentNumber })
   })
 
-  const taxId = options.taxId ?? extractTaxId(options.relativePath)
-  if (!taxId) throw new Error('無法判定統一編號')
-
-  return changedDocumentNumbers.map((documentNumber) => ({
-    taxId,
-    fileName: options.relativePath,
-    documentNumber,
-  }))
+  return changedRows
 }
 
 export function buildReport(rows: ChangeRow[], records: ProcessingRecord[]): ArrayBuffer {
@@ -111,7 +109,7 @@ function readWorkbook(buffer: ArrayBuffer): XLSX.WorkBook {
       cellHTML: false,
       cellNF: false,
       cellStyles: false,
-      cellText: false,
+      cellText: true,
       bookDeps: false,
       bookFiles: false,
       bookProps: false,
@@ -184,6 +182,11 @@ const isBlank = (value: unknown): boolean =>
 const toRequiredString = (value: unknown): string | undefined => {
   if (isBlank(value) || (typeof value !== 'string' && typeof value !== 'number')) return undefined
   return String(value).trim()
+}
+
+const toBuyerTaxId = (value: unknown): string | undefined => {
+  const taxId = toRequiredString(value)
+  return taxId && /^(?:\d{8}|0{10})$/.test(taxId) ? taxId : undefined
 }
 
 const neutralizeFormula = (value: string): string => (/^\s*[=+\-@]/.test(value) ? `'${value}` : value)
